@@ -4,7 +4,7 @@ import sys
 import json
 
 from collections.abc import Iterable
-from typing import List
+from typing import List, Dict
 
 from .converter import ConfigType
 from .error import (
@@ -62,9 +62,7 @@ class Batch:
         Create an event object that will be used in the invocation of the
         ingestion lambda
         """
-        return {
-            "files": self.filenames,
-        }
+        return {"files": compress_filepaths(self.filenames)}
 
     def event_size_over_limit(self) -> bool:
         """
@@ -75,6 +73,38 @@ class Batch:
             logging.info("Event size of %d kb is over limit.", event_size_kb)
             return True
         return False
+
+
+def compress_filepaths(filepaths: List[str]) -> Dict[str, List[str]]:
+    """
+    compress a list of filepaths into a dict using the directories as keys
+    holding a list of files contained in that dict
+    """
+    files: Dict[str, List[str]] = {}
+
+    for filepath in filepaths:
+        dirname = os.path.dirname(filepath)
+        basename = os.path.basename(filepath)
+
+        if dirname in files.keys():  # pylint: disable=C0201
+            files[dirname].append(basename)
+        else:
+            files.update({dirname: [basename]})
+
+    return files
+
+
+def unpack_filepaths(files: Dict[str, List[str]]) -> List[str]:
+    """
+    convert a compressed dict of directories and filenames into a list of
+    filepaths for ingestion
+    """
+    filepaths = []
+    for dirname, basenames in files.items():
+        for basename in basenames:
+            filepaths.append(os.path.join(dirname, basename))
+
+    return filepaths
 
 
 def batch_files(

@@ -11,6 +11,8 @@ from botocore.stub import ANY
 from py_gtfs_rt_ingestion import ConfigType
 from py_gtfs_rt_ingestion.batcher import Batch
 from py_gtfs_rt_ingestion.batcher import batch_files
+from py_gtfs_rt_ingestion.batcher import compress_filepaths
+from py_gtfs_rt_ingestion.batcher import unpack_filepaths
 from py_gtfs_rt_ingestion.error import ArgumentException
 from py_gtfs_rt_ingestion.s3_utils import file_list_from_s3
 
@@ -30,7 +32,7 @@ def test_batch_class(capfd) -> None:  # type: ignore
         print(batch)
         out, _ = capfd.readouterr()
         assert out == f"Batch of 0 bytes in 0 {each_config} files\n"
-        assert batch.create_event() == {"files": []}
+        assert batch.create_event() == {"files": {}}
 
     # `add_file` method operating correctly
     files = {
@@ -78,6 +80,33 @@ def test_empty_batch() -> None:
     """
     for batch in batch_files(files=[], threshold=100):
         assert batch == []
+
+
+def test_filepath_compression() -> None:
+    """
+    ensure that the compress_filepaths method works as expected and an be
+    correctly reversed by the unpack_files method.
+    """
+    test_filepaths = [
+        "dir/one/file_one.txt",
+        "dir/one/file_two.txt",
+        "dir/one/file_three.txt",
+        "dir/two/file_four.txt",
+        "dir/two/file_five.txt",
+        "dir/two/file_six.txt",
+        "dir/two/file_seven.txt",
+    ]
+
+    compressed_files = compress_filepaths(test_filepaths)
+
+    assert "dir/one" in compressed_files.keys()  # pylint: disable=C0201
+    assert len(compressed_files["dir/one"]) == 3
+
+    assert "dir/two" in compressed_files.keys()  # pylint: disable=C0201
+    assert len(compressed_files["dir/two"]) == 4
+
+    uncompressed_files = unpack_filepaths(compressed_files)
+    assert set(uncompressed_files) == set(test_filepaths)
 
 
 def test_batch_files(s3_stub) -> None:  # type: ignore

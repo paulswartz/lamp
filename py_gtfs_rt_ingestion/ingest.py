@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 
-from typing import Union
+from typing import Dict, List, Union
 
 import pyarrow.parquet as pq
 
@@ -19,6 +19,7 @@ from py_gtfs_rt_ingestion import LambdaContext
 from py_gtfs_rt_ingestion import LambdaDict
 from py_gtfs_rt_ingestion import get_converter
 from py_gtfs_rt_ingestion import move_s3_objects
+from py_gtfs_rt_ingestion import unpack_filepaths
 
 logging.getLogger().setLevel("INFO")
 
@@ -81,7 +82,7 @@ def parse_args(args: list[str]) -> Union[LambdaDict, list[LambdaDict]]:
     return {"files": [(parsed_args.input_file)]}
 
 
-def main(files: list[str]) -> None:
+def main(files: Dict[str, List[str]]) -> None:
     """
     * Convert a list of files from s3 to a parquet table
     * Write the table out to s3
@@ -101,17 +102,18 @@ def main(files: list[str]) -> None:
     except KeyError as e:
         raise ArgumentException("Missing S3 Bucket environment variable") from e
 
+    filepaths = unpack_filepaths(files)
     archive_files = []
     error_files = []
 
     try:
-        config_type = ConfigType.from_filename(files[0])
+        config_type = ConfigType.from_filename(filepaths[0])
         converter = get_converter(config_type)
 
         # filesystem to use when writing parquet files
         s3_filesystem = fs.S3FileSystem()
 
-        for s3_prefix, table in converter.convert(files):
+        for s3_prefix, table in converter.convert(filepaths):
             s3_path = os.path.join(export_bucket, s3_prefix)
             logging.info("Writing Table to %s", s3_path)
             pq.write_to_dataset(
@@ -130,7 +132,7 @@ def main(files: list[str]) -> None:
         logging.error("Encountered An Error Converting Files")
         logging.exception(e)
         archive_files = []
-        error_files = files
+        error_files = filepaths
 
     finally:
         if len(error_files) > 0:
@@ -153,7 +155,20 @@ def lambda_handler(event: LambdaDict, context: LambdaContext) -> None:
 
     expected event structure is
     {
-        files: [file_name_1, file_name_2, ...],
+        files: {
+            prefix/dir/one: [
+                file_name_1,
+                file_name_2,
+                ...,
+                file_name_n
+            ],
+            prefix/dir/two: [
+                file_name_1,
+                file_name_2,
+                ...,
+                file_name_n
+            ]
+        }
     }
     where S3 files will begin with 's3://'
 
