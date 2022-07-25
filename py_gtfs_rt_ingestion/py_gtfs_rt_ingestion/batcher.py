@@ -62,7 +62,7 @@ class Batch:
         Create an event object that will be used in the invocation of the
         ingestion lambda
         """
-        return {"files": compress_filepaths(self.filenames)}
+        return compress_filepaths(self.filenames)
 
     def event_size_over_limit(self) -> bool:
         """
@@ -75,36 +75,68 @@ class Batch:
         return False
 
 
-def compress_filepaths(filepaths: List[str]) -> Dict[str, List[str]]:
+def compress_filepaths(filepaths: List[str]) -> Dict:
     """
-    compress a list of filepaths into a dict using the directories as keys
-    holding a list of files contained in that dict
+    compress a list of filepaths into a dict with the prefix, suffix, and list
+    of unique components
     """
-    files: Dict[str, List[str]] = {}
+    if len(filepaths) == 0:
+        return {"prefix": "", "suffix": "", "filepaths": []}
 
-    for filepath in filepaths:
-        dirname = os.path.dirname(filepath)
-        basename = os.path.basename(filepath)
+    def longest_common(filepaths: List[str], prefix: bool = True) -> str:
+        """
+        get the longest start or end string common to all files in filepaths
+        """
+        first_file = filepaths[0]
 
-        if dirname in files.keys():  # pylint: disable=C0201
-            files[dirname].append(basename)
-        else:
-            files.update({dirname: [basename]})
+        def get_stem(i: int) -> str:
+            """get the 0->ith or ith->-1 string from first_file"""
+            if prefix:
+                return first_file[:i]
+            # if suffix
+            return first_file[-i:]
 
-    return files
+        def is_common(file: str, stem: str) -> bool:
+            """do all files start or end with this string"""
+            if prefix:
+                return file.startswith(stem)
+            # if suffix
+            return file.endswith(stem)
+
+        result = ""
+
+        for i in range(1, len(first_file)):
+            stem = get_stem(i)
+
+            for file in filepaths:
+                if not is_common(file, stem):
+                    return result
+
+            result = stem
+
+        return result
+
+    prefix = longest_common(filepaths=filepaths, prefix=True)
+    filepaths = [file.removeprefix(prefix) for file in filepaths]
+
+    suffix = longest_common(filepaths=filepaths, prefix=False)
+    filepaths = [file.removesuffix(suffix) for file in filepaths]
+
+    return {"prefix": prefix, "suffix": suffix, "filepaths": filepaths}
 
 
-def unpack_filepaths(files: Dict[str, List[str]]) -> List[str]:
+def unpack_filepaths(
+    prefix: str, suffix: str, filepaths: List[str]
+) -> List[str]:
     """
     convert a compressed dict of directories and filenames into a list of
     filepaths for ingestion
     """
-    filepaths = []
-    for dirname, basenames in files.items():
-        for basename in basenames:
-            filepaths.append(os.path.join(dirname, basename))
+    combined = []
+    for unique in filepaths:
+        combined.append(prefix + unique + suffix)
 
-    return filepaths
+    return combined
 
 
 def batch_files(

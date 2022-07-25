@@ -32,7 +32,11 @@ def test_batch_class(capfd) -> None:  # type: ignore
         print(batch)
         out, _ = capfd.readouterr()
         assert out == f"Batch of 0 bytes in 0 {each_config} files\n"
-        assert batch.create_event() == {"files": {}}
+        assert batch.create_event() == {
+            "prefix": "",
+            "suffix": "",
+            "filepaths": [],
+        }
 
     # `add_file` method operating correctly
     files = {
@@ -99,13 +103,11 @@ def test_filepath_compression() -> None:
 
     compressed_files = compress_filepaths(test_filepaths)
 
-    assert "dir/one" in compressed_files.keys()  # pylint: disable=C0201
-    assert len(compressed_files["dir/one"]) == 3
+    assert compressed_files["prefix"] == "dir/"
+    assert compressed_files["suffix"] == ".txt"
+    assert len(compressed_files["filepaths"]) == len(test_filepaths)
 
-    assert "dir/two" in compressed_files.keys()  # pylint: disable=C0201
-    assert len(compressed_files["dir/two"]) == 4
-
-    uncompressed_files = unpack_filepaths(compressed_files)
+    uncompressed_files = unpack_filepaths(**compressed_files)
     assert set(uncompressed_files) == set(test_filepaths)
 
 
