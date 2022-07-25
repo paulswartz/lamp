@@ -19,7 +19,7 @@ from py_gtfs_rt_ingestion import LambdaContext
 from py_gtfs_rt_ingestion import LambdaDict
 from py_gtfs_rt_ingestion import get_converter
 from py_gtfs_rt_ingestion import move_s3_objects
-from py_gtfs_rt_ingestion import unpack_filepaths
+from py_gtfs_rt_ingestion import unpack_filenames
 
 logging.getLogger().setLevel("INFO")
 
@@ -102,18 +102,18 @@ def main(event: Dict) -> None:
     except KeyError as e:
         raise ArgumentException("Missing S3 Bucket environment variable") from e
 
-    filepaths = unpack_filepaths(**event)
+    files = unpack_filenames(**event)
     archive_files = []
     error_files = []
 
     try:
-        config_type = ConfigType.from_filename(filepaths[0])
+        config_type = ConfigType.from_filename(files[0])
         converter = get_converter(config_type)
 
         # filesystem to use when writing parquet files
         s3_filesystem = fs.S3FileSystem()
 
-        for s3_prefix, table in converter.convert(filepaths):
+        for s3_prefix, table in converter.convert(files):
             s3_path = os.path.join(export_bucket, s3_prefix)
             logging.info("Writing Table to %s", s3_path)
             pq.write_to_dataset(
@@ -132,7 +132,7 @@ def main(event: Dict) -> None:
         logging.error("Encountered An Error Converting Files")
         logging.exception(e)
         archive_files = []
-        error_files = filepaths
+        error_files = files
 
     finally:
         if len(error_files) > 0:

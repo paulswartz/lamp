@@ -11,8 +11,8 @@ from botocore.stub import ANY
 from py_gtfs_rt_ingestion import ConfigType
 from py_gtfs_rt_ingestion.batcher import Batch
 from py_gtfs_rt_ingestion.batcher import batch_files
-from py_gtfs_rt_ingestion.batcher import compress_filepaths
-from py_gtfs_rt_ingestion.batcher import unpack_filepaths
+from py_gtfs_rt_ingestion.batcher import compress_filenames
+from py_gtfs_rt_ingestion.batcher import unpack_filenames
 from py_gtfs_rt_ingestion.error import ArgumentException
 from py_gtfs_rt_ingestion.s3_utils import file_list_from_s3
 
@@ -35,7 +35,7 @@ def test_batch_class(capfd) -> None:  # type: ignore
         assert batch.create_event() == {
             "prefix": "",
             "suffix": "",
-            "filepaths": [],
+            "filenames": [],
         }
 
     # `add_file` method operating correctly
@@ -88,10 +88,10 @@ def test_empty_batch() -> None:
 
 def test_filepath_compression() -> None:
     """
-    ensure that the compress_filepaths method works as expected and an be
+    ensure that the compress_filenames method works as expected and an be
     correctly reversed by the unpack_files method.
     """
-    test_filepaths = [
+    test_filenames = [
         "dir/one/file_one.txt",
         "dir/one/file_two.txt",
         "dir/one/file_three.txt",
@@ -101,14 +101,14 @@ def test_filepath_compression() -> None:
         "dir/two/file_seven.txt",
     ]
 
-    compressed_files = compress_filepaths(test_filepaths)
+    prefix, suffix, filenames = compress_filenames(test_filenames)
 
-    assert compressed_files["prefix"] == "dir/"
-    assert compressed_files["suffix"] == ".txt"
-    assert len(compressed_files["filepaths"]) == len(test_filepaths)
+    assert prefix == "dir/"
+    assert suffix == ".txt"
+    assert len(filenames) == len(test_filenames)
 
-    uncompressed_files = unpack_filepaths(**compressed_files)
-    assert set(uncompressed_files) == set(test_filepaths)
+    uncompressed_files = unpack_filenames(prefix, suffix, filenames)
+    assert set(uncompressed_files) == set(test_filenames)
 
 
 def test_batch_files(s3_stub) -> None:  # type: ignore
