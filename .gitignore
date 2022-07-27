@@ -20,3 +20,5 @@ package
 dist
 *.zip
 *.sh
+
+!gtfs_rt.ipynb
