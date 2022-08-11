@@ -3,11 +3,13 @@ import os
 import urllib.parse
 
 import sqlalchemy as sa
-from sqlalchemy.engine import URL as DbUrl
+from sqlalchemy.engine import URL as DbUrl  # type: ignore
 from sqlalchemy.ext.declarative import declarative_base
 
 
-def get_local_engine(echo: bool = False) -> sa.future.engine.Engine:
+def get_local_engine(
+    echo: bool = False,
+) -> sa.future.engine.Engine:  # type: ignore
     """
     Get an SQL Alchemy engine that connects to a locally Postgres RDS stood up
     via docker using env variables
@@ -36,7 +38,9 @@ def get_local_engine(echo: bool = False) -> sa.future.engine.Engine:
         raise exception
 
 
-def get_experimental_engine(echo: bool = False) -> sa.future.engine.Engine:
+def get_experimental_engine(
+    echo: bool = False,
+) -> sa.future.engine.Engine:  # type: ignore
     """
     return lightweight engine using local memeory that doens't require a
     database to be stood up. great for testing from within the shell.
@@ -47,7 +51,7 @@ def get_experimental_engine(echo: bool = False) -> sa.future.engine.Engine:
     return engine
 
 
-def get_aws_engine() -> sa.future.engine.Engine:
+def get_aws_engine() -> sa.future.engine.Engine:  # type: ignore
     """
     return an engine connected to our aws rds
     """

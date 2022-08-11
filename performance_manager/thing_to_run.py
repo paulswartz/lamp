@@ -87,7 +87,7 @@ def write_from_dict(input_dictionary: dict, experimental: bool) -> None:
         sql_session = sessionmaker(bind=sql_engine)
         SqlBase.metadata.create_all(sql_engine)
 
-        with sql_session.begin() as session:
+        with sql_session.begin() as session:  # type: ignore
             session.execute(
                 insert(StaticSubHeadway.__table__), input_dictionary
             )
