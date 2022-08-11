@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  call-workflow:
-    uses: mbta/workflows/.github/workflows/deploy-ecs@main
+  deploy:
+    name: Deploy
+    uses: mbta/workflows/.github/workflows/deploy-ecs.yml@main
     with:
       app-name: lamp
       environment: 'dev'
