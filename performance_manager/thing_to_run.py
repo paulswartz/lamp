@@ -26,6 +26,7 @@ def load_environment() -> None:
     """
     try:
         if int(os.environ.get("BOOTSTRAPPED", 0)) == 1:
+            logging.info("ENV already loaded")
             return
 
         here = os.path.dirname(os.path.abspath(__file__))
