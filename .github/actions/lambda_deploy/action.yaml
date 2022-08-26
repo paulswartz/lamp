@@ -24,7 +24,8 @@ runs:
       with:
         poetry-dir: py_gtfs_rt_ingestion
 
-    - uses: actions/checkout@v2
+    - name: Download psycopg2 with libpq installed
+      uses: actions/checkout@v2
       with:
         repository: jkehler/awslambda-psycopg2
         path: psycopg_with_libpq
