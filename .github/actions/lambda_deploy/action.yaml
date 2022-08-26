@@ -35,20 +35,43 @@ runs:
         cp -v ingest.py package/ingest.py
       shell: bash
 
-    - name: Download psycopg2 with libpq installed
-      uses: actions/checkout@v2
-      with:
-        # this repo has a bunch of stars and bundles psycopg with libpq
-        repository: jkehler/awslambda-psycopg2
-        path: psycopg_with_libpq
+    - name: Build Home Rolled psycopg with libpq
+      working-directory: .
+      run: |
+        sudo apt update
+        sudo apt -y install libssl
+        exit
+        # download and untar postgres 14.5 source code
+        wget https://ftp.postgresql.org/pub/source/v14.5/postgresql-14.5.tar.gz
+        tar -xf postgresql-14.5.tar.gz
+        # download and untar psycopg 2.9.3 source code
+        wget https://files.pythonhosted.org/packages/d1/1e/b450599a27b1809bccbd4e369f397cb18dc56b875778d961f9ae180b54b7/psycopg2-2.9.3.tar.gz
+        tar -xf psycopg2-2.9.3.tar.gz
+        # configure and build postgresql 14.5 from soruce
+        postgres_src="/home/runner/work/lamp/lamp/postgresql-14.5"
+        cd $postgres_src
+        ./configure --prefix $postgres_src --without-readline --without-zlib --with-openssl
+        make
+        make install
+        # configure (via sed) and build psycopg2
+        cd ../psycopg2-2.9.3
+        sed -i "s/^pg_config.*$/pg_config = \/home\/runner\/work\/lamp\/lamp\/postgresql-14.5\/bin\/pg_config/g" setup.cfg
+        sed -i "s/^static_libpq.*$/static_libpq = 1/g" setup.cfg
+        sed -i "s/^libraries.*$/libraries = ssl crypto/g" setup.cfg
+        cat setup.cfg
+        python setup.py build
+        ls build/lib.linux-x86_64-3.9/psycopg2
+      shell: bash
 
     - name: Install psycopg2 with libpq
       working-directory: py_gtfs_rt_ingestion
       run: |
-        # remove the shipped version of psycopg2 and replace it with the one
-        # with libpq installed
+        # remove psycopg2 and update it with our home built one
         rm -r package/psycopg2
-        mv ../psycopg_with_libpq/psycopg2-3.9 package/psycopg2
+        mv /home/runner/work/lamp/lamp/psycopg2-2.9.3/build/lib.linux-x86_64-3.9/psycopg2 package/
+        # add the batch and ingest scripts to the package
+        cp -v batch_files.py package/batch_files.py
+        cp -v ingest.py package/ingest.py
       shell: bash
 
     - name: Install AWS SSL Cert
