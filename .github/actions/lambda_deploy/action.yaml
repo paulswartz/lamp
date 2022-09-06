@@ -40,7 +40,6 @@ runs:
       run: |
         sudo apt update
         sudo apt -y install libssl-dev
-        exit
         # download and untar postgres 14.5 source code
         wget https://ftp.postgresql.org/pub/source/v14.5/postgresql-14.5.tar.gz
         tar -xf postgresql-14.5.tar.gz
