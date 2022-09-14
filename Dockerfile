@@ -17,3 +17,6 @@ COPY ./performance_manager /performance_manager/
 WORKDIR /performance_manager/
 RUN poetry config virtualenvs.create false
 RUN poetry install --no-dev --no-interaction --no-ansi
+
+# Run the application
+CMD ["python", "startup.py"]
