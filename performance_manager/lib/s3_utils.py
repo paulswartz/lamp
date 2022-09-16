@@ -7,6 +7,7 @@ import pyarrow.parquet as pq
 from pyarrow import fs
 
 from .logging_utils import ProcessLogger
+import logging
 
 
 def read_parquet(
@@ -39,6 +40,7 @@ def read_parquet(
     except Exception as exception:
         # log and re-raise
         process_logger.log_failure(exception)
+        logging.exception(exception)
         raise exception
 
 
