@@ -6,6 +6,8 @@ import pandas
 import pyarrow.parquet as pq
 from pyarrow import fs
 
+from .logging_utils import ProcessLogger
+
 
 def read_parquet(
     filename: Union[str, List[str]],
@@ -15,18 +17,29 @@ def read_parquet(
     """
     read parquet file or files from s3 and return it as a pandas dataframe
     """
-    active_fs = fs.S3FileSystem()
-    if isinstance(filename, list):
-        to_load = [f.replace("s3://", "") for f in filename]
-    else:
-        to_load = [filename.replace("s3://", "")]
+    process_logger = ProcessLogger("read_parquet", filename=filename)
 
-    return (
-        pq.ParquetDataset(to_load, filesystem=active_fs, filters=filters)
-        .read_pandas()
-        .to_pandas()
-        .loc[:, columns]
-    )
+    try:
+        active_fs = fs.S3FileSystem()
+        if isinstance(filename, list):
+            to_load = [f.replace("s3://", "") for f in filename]
+        else:
+            to_load = [filename.replace("s3://", "")]
+
+        dataframe = (
+            pq.ParquetDataset(to_load, filesystem=active_fs, filters=filters)
+            .read_pandas()
+            .to_pandas()
+            .loc[:, columns]
+        )
+
+        process_logger.log_complete()
+
+        return dataframe
+    except Exception as exception:
+        # log and re-raise
+        process_logger.log_failure(exception)
+        raise exception
 
 
 def file_list_from_s3(bucket_name: str, file_prefix: str) -> Iterator[str]:
