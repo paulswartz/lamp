@@ -73,6 +73,10 @@ def get_local_engine(echo: bool = False) -> sa.engine.Engine:
             # update the ssl options string to add to the database url
             db_ssl_options = f"?sslmode=verify-full&sslrootcert={db_ssl_cert}"
 
+            process_logger.add_metadata(strategy="rds_token")
+        else:
+            process_logger.add_metadata(strategy="db_password")
+
         database_url = (
             f"postgresql+psycopg2://{db_user}:"
             f"{db_password}@{db_host}/{db_name}"

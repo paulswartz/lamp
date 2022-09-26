@@ -151,7 +151,8 @@ def lambda_handler(
             batch_args = BatchArgs()
 
         if batch_args.debug_rds_connection:
-            get_local_engine()
+            with get_local_engine().connect() as connection:
+                logging.info("connected")
         else:
             validate_environment()
             main(batch_args)
