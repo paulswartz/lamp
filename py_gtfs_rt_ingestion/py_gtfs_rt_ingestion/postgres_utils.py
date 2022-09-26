@@ -86,6 +86,7 @@ def get_local_engine(echo: bool = False) -> sa.engine.Engine:
         engine = sa.create_engine(database_url, echo=echo, future=True)
 
         process_logger.log_complete()
+        a = 'b'
         return engine
     except Exception as exception:
         process_logger.log_failure(exception)
