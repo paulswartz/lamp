@@ -140,6 +140,9 @@ def lambda_handler(
 
     batch files should all be of same ConfigType
     """
+    logging.info("lambda ingestion turned off")
+    return
+
     logging.info("batch_event=%s", json.dumps(event))
     process_logger = ProcessLogger("batch_files_lambda")
     process_logger.log_start()
