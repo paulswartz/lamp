@@ -82,7 +82,7 @@ def validate_environment() -> None:
         )
 
 
-@schedule.repeat(schedule.every().hour.at(":05"))
+@schedule.repeat(schedule.every(5).minutes)
 def batch_and_ingest() -> None:
     """
     get all of the filepaths currently in the incoming bucket, sort them into
