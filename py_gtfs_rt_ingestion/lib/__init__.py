@@ -10,7 +10,7 @@ from .lambda_types import LambdaContext, LambdaDict
 from .logging_utils import ProcessLogger
 from .postgres_utils import insert_metadata, get_local_engine
 from .s3_utils import file_list_from_s3, move_s3_objects, write_parquet_file
-from .utils import load_environment
+from .utils import load_environment, group_sort_file_list
 
 __version__ = "0.1.0"
 

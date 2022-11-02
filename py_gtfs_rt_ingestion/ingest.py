@@ -13,6 +13,7 @@ from lib import (
     move_s3_objects,
     write_parquet_file,
     ProcessLogger,
+    group_sort_file_list,
 )
 
 logging.getLogger().setLevel("INFO")
@@ -99,53 +100,59 @@ def batch_and_ingest() -> None:
         file_prefix=DEFAULT_S3_PREFIX,
     )
 
-    for converter in ingest_files(files):
-        archive_files = []
-        error_files = []
+    grouped_files = group_sort_file_list(files)
 
-        try:
-            for s3_prefix, table in converter.get_tables():
-                write_parquet_file(
-                    table=table,
-                    filetype=s3_prefix,
-                    s3_path=os.path.join(
-                        os.environ["SPRINGBOARD_BUCKET"],
-                        DEFAULT_S3_PREFIX,
-                        s3_prefix,
-                    ),
-                    partition_cols=converter.partition_cols,
-                )
-
-            archive_files = converter.archive_files
-            error_files = converter.error_files
-
-        except Exception as exception:
-            logging.exception(
-                "failed=convert_files, error_type=%s, config_type=%s, filecount=%d",
-                type(exception).__name__,
-                converter.config_type,
-                len(converter.archive_files),
-            )
-
-            # if unable to determine config from filename, or not implemented
-            # yet, all files are marked as failed ingestion
+    # each group could be passed into it's own worker process
+    for file_group in grouped_files.values():
+        for converter in ingest_files(file_group):
             archive_files = []
-            error_files = converter.archive_files + converter.error_files
+            error_files = []
 
-        finally:
-            if len(error_files) > 0:
-                move_s3_objects(
-                    error_files,
-                    os.path.join(os.environ["ERROR_BUCKET"], DEFAULT_S3_PREFIX),
+            try:
+                for s3_prefix, table in converter.get_tables():
+                    write_parquet_file(
+                        table=table,
+                        filetype=s3_prefix,
+                        s3_path=os.path.join(
+                            os.environ["SPRINGBOARD_BUCKET"],
+                            DEFAULT_S3_PREFIX,
+                            s3_prefix,
+                        ),
+                        partition_cols=converter.partition_cols,
+                    )
+
+                archive_files = converter.archive_files
+                error_files = converter.error_files
+
+            except Exception as exception:
+                logging.exception(
+                    "failed=convert_files, error_type=%s, config_type=%s, filecount=%d",
+                    type(exception).__name__,
+                    converter.config_type,
+                    len(converter.archive_files),
                 )
 
-            if len(archive_files) > 0:
-                move_s3_objects(
-                    archive_files,
-                    os.path.join(
-                        os.environ["ARCHIVE_BUCKET"], DEFAULT_S3_PREFIX
-                    ),
-                )
+                # if unable to determine config from filename, or not implemented
+                # yet, all files are marked as failed ingestion
+                archive_files = []
+                error_files = converter.archive_files + converter.error_files
+
+            finally:
+                if len(error_files) > 0:
+                    move_s3_objects(
+                        error_files,
+                        os.path.join(
+                            os.environ["ERROR_BUCKET"], DEFAULT_S3_PREFIX
+                        ),
+                    )
+
+                if len(archive_files) > 0:
+                    move_s3_objects(
+                        archive_files,
+                        os.path.join(
+                            os.environ["ARCHIVE_BUCKET"], DEFAULT_S3_PREFIX
+                        ),
+                    )
 
 
 def main() -> None:
