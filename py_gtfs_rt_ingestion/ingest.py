@@ -161,8 +161,6 @@ def ingest() -> None:
 
 def main() -> None:
     """every second run jobs that are currently pending"""
-    while True:
-        time.sleep(1)
     ingest()
     while True:
         schedule.run_pending()
