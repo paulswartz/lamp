@@ -49,9 +49,7 @@ def file_list_from_s3(bucket_name: str, file_prefix: str) -> List[str]:
     :return list of s3 filepaths sorted by the timestamps formatted into them
     """
     process_logger = ProcessLogger(
-        "file_list_from_s3",
-        bucket_name=bucket_name,
-        file_prefix=file_prefix
+        "file_list_from_s3", bucket_name=bucket_name, file_prefix=file_prefix
     )
     process_logger.log_start()
 
