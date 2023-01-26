@@ -34,8 +34,17 @@ def get_vp_dataframe(to_load: Union[str, List[str]]) -> pandas.DataFrame:
         "start_time",
         "vehicle_id",
     ]
-
-    return read_parquet(to_load, columns=vehicle_position_cols)
+    vehicle_position_filters = [
+        ("current_status", "!=", "None"),
+        ("current_stop_sequence", "!=", "None")
+        ("stop_id", "!=", "None"),
+        ("direction_id", "in", (0, 1)),
+        ("route_id", "!=", "None"),
+        ("start_date", "!=", "None"),
+        ("start_time", "!=", "None"),
+        ("vehicle_id", "!=", "None"),
+    ]
+    return read_parquet(to_load, columns=vehicle_position_cols, filters=vehicle_position_filters)
 
 
 def transform_vp_dtyes(vehicle_positions: pandas.DataFrame) -> pandas.DataFrame:
@@ -49,30 +58,30 @@ def transform_vp_dtyes(vehicle_positions: pandas.DataFrame) -> pandas.DataFrame:
     ).astype(numpy.bool8)
     vehicle_positions = vehicle_positions.drop(columns=["current_status"])
 
-    # store start_date as Int64 [nullable] instead of string
+    # store start_date as int64 [not nullable]
     vehicle_positions["start_date"] = pandas.to_numeric(
         vehicle_positions["start_date"]
-    ).astype("Int64")
+    ).astype("int64")
 
     # rename current_stop_sequence as stop_sequence
-    # and convert to Int64 [nullable]
-    vehicle_positions.rename(
-        columns={"current_stop_sequence": "stop_sequence"}, inplace=True
+    # and convert to int64 [not nullable]
+    vehicle_positions = vehicle_positions.rename(
+        columns={"current_stop_sequence": "stop_sequence"}
     )
     vehicle_positions["stop_sequence"] = pandas.to_numeric(
         vehicle_positions["stop_sequence"]
-    ).astype("Int64")
+    ).astype("int64")
 
-    # store direction_id as Int64 [nullable]
+    # store direction_id as bool [not nullable]
     vehicle_positions["direction_id"] = pandas.to_numeric(
         vehicle_positions["direction_id"]
-    ).astype("Int64")
+    ).astype(numpy.bool8)
 
-    # store start_time as seconds from start of day (Int64 [nullable])
+    # store start_time as int64 [not nullable] seconds from start of day
     vehicle_positions["start_time"] = (
         vehicle_positions["start_time"]
         .apply(start_time_to_seconds)
-        .astype("Int64")
+        .astype("int64")
     )
 
     return vehicle_positions
@@ -201,6 +210,7 @@ def transform_vp_timestamps(
     first_last_mask = (
         vehicle_positions["hash"] != vehicle_positions["hash"].shift(1)
     ) | (vehicle_positions["hash"] != vehicle_positions["hash"].shift(-1))
+
     vehicle_positions = vehicle_positions.loc[first_last_mask, :]
 
     # transform vehicle_timestamp with matching consectuive hash events into
