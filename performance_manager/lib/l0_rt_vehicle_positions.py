@@ -4,18 +4,18 @@ import pathlib
 import numpy
 import pandas
 import sqlalchemy as sa
-from sqlalchemy.orm import sessionmaker
 
 from .gtfs_utils import start_time_to_seconds, add_event_hash_column
 from .logging_utils import ProcessLogger
 from .postgres_schema import (
     StaticStops,
-    VehiclePositionEvents,
+    VehicleEvents,
     MetadataLog,
     StaticFeedInfo,
+    TempHashCompare,
 )
 from .postgres_utils import get_unprocessed_files, DatabaseManager
-from .s3_utils import read_parquet, get_utc_from_partition_path
+from .s3_utils import read_parquet
 
 
 def get_vp_dataframe(to_load: Union[str, List[str]]) -> pandas.DataFrame:
@@ -36,8 +36,9 @@ def get_vp_dataframe(to_load: Union[str, List[str]]) -> pandas.DataFrame:
     ]
     vehicle_position_filters = [
         ("current_status", "!=", "None"),
-        ("current_stop_sequence", "!=", "None")
+        ("current_stop_sequence", ">=", 0),
         ("stop_id", "!=", "None"),
+        ("vehicle_timestamp", ">", 0),
         ("direction_id", "in", (0, 1)),
         ("route_id", "!=", "None"),
         ("start_date", "!=", "None"),
@@ -58,11 +59,6 @@ def transform_vp_dtyes(vehicle_positions: pandas.DataFrame) -> pandas.DataFrame:
     ).astype(numpy.bool8)
     vehicle_positions = vehicle_positions.drop(columns=["current_status"])
 
-    # store start_date as int64 [not nullable]
-    vehicle_positions["start_date"] = pandas.to_numeric(
-        vehicle_positions["start_date"]
-    ).astype("int64")
-
     # rename current_stop_sequence as stop_sequence
     # and convert to int64 [not nullable]
     vehicle_positions = vehicle_positions.rename(
@@ -72,10 +68,20 @@ def transform_vp_dtyes(vehicle_positions: pandas.DataFrame) -> pandas.DataFrame:
         vehicle_positions["stop_sequence"]
     ).astype("int64")
 
+    # store vehicle_timestamp as Int64 [nullable]
+    vehicle_positions["vehicle_timestamp"] = pandas.to_numeric(
+        vehicle_positions["vehicle_timestamp"]
+    ).astype("Int64")
+
     # store direction_id as bool [not nullable]
     vehicle_positions["direction_id"] = pandas.to_numeric(
         vehicle_positions["direction_id"]
     ).astype(numpy.bool8)
+
+    # store start_date as int64 [not nullable]
+    vehicle_positions["start_date"] = pandas.to_numeric(
+        vehicle_positions["start_date"]
+    ).astype("int64")
 
     # store start_time as int64 [not nullable] seconds from start of day
     vehicle_positions["start_time"] = (
@@ -172,121 +178,100 @@ def join_gtfs_static(
     return vehicle_positions
 
 
-def hash_events(vehicle_positions: pandas.DataFrame) -> pandas.DataFrame:
-    """
-    hash category columns of rows and return data frame with "hash" column
-    """
-    # hash row data, exluding vehicle_timestamp column
-    # This hash is used to identify continuous series of records with the same
-    # categorical data
-    vehicle_positions = add_event_hash_column(vehicle_positions)
-
-    # drop duplicates of hash and vehicle_timestamp columns (extraneous data)
-    vehicle_positions = vehicle_positions.drop_duplicates(
-        subset=["vehicle_timestamp", "hash"]
-    )
-
-    # "parent_station" column no longer needed, can be dropped
-    vehicle_positions = vehicle_positions.drop(columns=["parent_station"])
-
-    return vehicle_positions
-
-
 def transform_vp_timestamps(
     vehicle_positions: pandas.DataFrame,
 ) -> pandas.DataFrame:
     """
     convert raw vehicle position data with one timestamp field into
-    vehicle position events with timestamp_start and timestamp_end
+    vehicle position events with vp_move_timestamp and vp_stop_timestamp
     """
-    vehicle_positions = vehicle_positions.sort_values(
-        by=["vehicle_id", "vehicle_timestamp"]
+    vehicle_positions = add_event_hash_column(
+        vehicle_positions, 
+        hash_column_name="trip_stop_hash", 
     )
 
-    # calculate mask to identify time series hash changes
-    # this keeps first and last event for matching consecutive hash events
-    # result is a 'start' event and 'end' event in consecutive rows for
-    # matching hash events
-    first_last_mask = (
-        vehicle_positions["hash"] != vehicle_positions["hash"].shift(1)
-    ) | (vehicle_positions["hash"] != vehicle_positions["hash"].shift(-1))
+    vehicle_positions = (
+            vehicle_positions.sort_values(
+                by=["trip_stop_hash","is_moving","vehicle_timestamp"], 
+                ascending=True
+            ).drop_duplicates(
+                subset=["trip_stop_hash", "is_moving"], 
+                keep="first"
+            )
+        )
 
-    vehicle_positions = vehicle_positions.loc[first_last_mask, :]
-
-    # transform vehicle_timestamp with matching consectuive hash events into
-    # one record with timestamp_start and timestamp_end columns if event is not
-    # part of consectuive matching events, then timestamp_start and
-    # timestamp_end will be same value
-    vehicle_positions.rename(
-        columns={"vehicle_timestamp": "timestamp_start"}, inplace=True
-    )
-    vehicle_positions["timestamp_end"] = numpy.where(
-        (vehicle_positions["hash"] == vehicle_positions["hash"].shift(-1)),
-        vehicle_positions["timestamp_start"].shift(-1),
-        vehicle_positions["timestamp_start"],
-    ).astype("int64")
-
-    # for matching consectuive hash events, drop 2nd event because timestamp has
-    # been captured in timestamp_end value of previous event
-    drop_last_mask = vehicle_positions["hash"] != vehicle_positions[
-        "hash"
-    ].shift(1)
-    vehicle_positions = vehicle_positions.loc[drop_last_mask, :].reset_index(
-        drop=True
+    vehicle_positions["vp_stop_timestamp"] = numpy.where(
+        (vehicle_positions["is_moving"] == False), 
+        vehicle_positions["vehicle_timestamp"],
+        None,
     )
 
-    vehicle_positions.insert(0, "pk_id", numpy.nan)
-
-    # fill all dataframe na values with Python None (for DB writing)
-    vehicle_positions = vehicle_positions.fillna(numpy.nan).replace(
-        [numpy.nan], [None]
+    vehicle_positions["vp_move_timestamp"] = numpy.where(
+        (vehicle_positions["is_moving"] == True), 
+        vehicle_positions["vehicle_timestamp"],
+        None,
     )
+
+    vehicle_positions["vp_move_timestamp"] = numpy.where(
+        (
+            (vehicle_positions["is_moving"] == False) 
+            & (vehicle_positions["trip_stop_hash"] == vehicle_positions["trip_stop_hash"].shift(-1))
+        ), 
+        vehicle_positions["vp_move_timestamp"].shift(-1),
+        vehicle_positions["vp_move_timestamp"],
+    )
+
+    vehicle_positions = (
+        vehicle_positions.drop_duplicates(
+            subset=["trip_stop_hash"], 
+            keep="first"
+        ).drop(
+            columns=["is_moving", "vehicle_timestamp"]
+        )
+    )
+
+    vehicle_positions.insert(0, "pk_id", None)
 
     return vehicle_positions
 
 
 def get_event_overlap(
-    folder: str,
     new_events: pandas.DataFrame,
-    sql_session: sessionmaker,
+    db_manager: DatabaseManager,
 ) -> pandas.DataFrame:
     """
     get a dataframe consisting of the new events and any overlapping events from
     the vehicle positions events table, sorted by vehicle id and then timestamp
     """
-    start_window_ts = get_utc_from_partition_path(folder)
-    timestamp_to_pull_min = start_window_ts - 300
-    timestamp_to_pull_max = start_window_ts + 300 + 3600
-    get_db_events = sa.select(
-        (
-            VehiclePositionEvents.pk_id,
-            VehiclePositionEvents.hash,
-            VehiclePositionEvents.timestamp_start,
-            VehiclePositionEvents.timestamp_end,
-            VehiclePositionEvents.vehicle_id,
-        )
-    ).where(
-        (VehiclePositionEvents.timestamp_end > timestamp_to_pull_min)
-        & (VehiclePositionEvents.timestamp_start < timestamp_to_pull_max)
+
+    db_manager.truncate_table(TempHashCompare)
+
+    db_manager.execute_with_data(
+        sa.insert(TempHashCompare.__table__),
+        new_events[["trip_stop_hash"]].rename(columns={"trip_stop_hash":"hash"})
     )
 
-    with sql_session.begin() as session:
-        # Join records from db with records from parquet db records should
-        # contain 'index' column that does not exist in parquet dataset
-        return pandas.concat(
-            [
-                pandas.DataFrame(
-                    [row._asdict() for row in session.execute(get_db_events)]
-                ),
-                new_events,
-            ]
-        ).sort_values(by=["vehicle_id", "timestamp_start"])
+    get_db_events = sa.select(
+        VehicleEvents.pk_id,
+        VehicleEvents.trip_stop_hash,
+        VehicleEvents.vp_move_timestamp,
+        VehicleEvents.vp_stop_timestamp,
+    ).join(
+        TempHashCompare,
+        TempHashCompare.hash == VehicleEvents.trip_stop_hash
+    )
+
+    db_events = db_manager.select_as_dataframe(get_db_events)
+
+    # Join records from db with records from parquet db records should
+    # contain 'index' column that does not exist in parquet dataset
+    
+    return pandas.concat([db_events, new_events]).sort_values(by=["trip_stop_hash", "pk_id"], na_position="last")
 
 
 def merge_vehicle_position_events(
-    folder: str,
     new_events: pandas.DataFrame,
-    session: sessionmaker,
+    db_manager: DatabaseManager,
 ) -> None:
     """
     merge new events from parquet file with exiting events found in database
@@ -296,79 +281,88 @@ def merge_vehicle_position_events(
     process_logger = ProcessLogger("vp_merge_events")
     process_logger.log_start()
 
-    merge_events = get_event_overlap(folder, new_events, session)
+    merge_events = get_event_overlap(new_events, db_manager)
 
-    # pylint: disable=duplicate-code
-
-    # Identify records that are continuing from existing db
-    # If such records are found, update timestamp_end with latest value
-    first_of_consecutive_events = merge_events["hash"] == merge_events[
-        "hash"
-    ].shift(-1)
-    last_of_consecutive_events = merge_events["hash"] == merge_events[
-        "hash"
-    ].shift(1)
-
-    merge_events["timestamp_end"] = numpy.where(
-        first_of_consecutive_events,
-        merge_events["timestamp_end"].shift(-1),
-        merge_events["timestamp_end"],
-    )
-
-    existing_was_updated_mask = (
-        ~(merge_events["pk_id"].isna()) & first_of_consecutive_events
-    )
-
-    existing_to_del_mask = (
-        ~(merge_events["pk_id"].isna()) & last_of_consecutive_events
-    )
+    duplicate_event_mask = merge_events.duplicated(subset="trip_stop_hash", keep=False)
 
     # new events that will be inserted into db table
     new_to_insert_mask = (
-        merge_events["pk_id"].isna()
-    ) & ~last_of_consecutive_events
+        (~duplicate_event_mask)
+        & (merge_events["pk_id"].isna())
+    )
+
+    update_mask = (
+        (duplicate_event_mask)
+        & (
+            merge_events["trip_stop_hash"] == merge_events["trip_stop_hash"].shift(-1)
+        )
+        & (
+            (
+                (~merge_events["vp_move_timestamp"].shift(-1).isna())
+                & (
+                    (merge_events["vp_move_timestamp"].isna())
+                    | (merge_events["vp_move_timestamp"] > merge_events["vp_move_timestamp"].shift(-1))
+                )
+                
+            )
+            | (
+                (~merge_events["vp_stop_timestamp"].shift(-1).isna())
+                & (
+                    (merge_events["vp_stop_timestamp"].isna())
+                    | (merge_events["vp_stop_timestamp"] > merge_events["vp_stop_timestamp"].shift(-1))
+                )
+                
+            )
+        )
+    )
+
+    update_records = merge_events[merge_events["trip_stop_hash"].isin(merge_events.loc[update_mask,"trip_stop_hash"])]
+    
+    update_records["vp_move_timestamp"] = numpy.where(
+        (update_records["trip_stop_hash"] == update_records["trip_stop_hash"].shift(-1))
+        & (
+            (update_records["vp_move_timestamp"].isna())
+            | (update_records["vp_move_timestamp"] > update_records["vp_move_timestamp"].shift(-1))
+        ),
+        update_records["vp_move_timestamp"].shift(-1),
+        update_records["vp_move_timestamp"],
+    )
+
+    update_records["vp_stop_timestamp"] = numpy.where(
+        (update_records["trip_stop_hash"] == update_records["trip_stop_hash"].shift(-1))
+        & (
+            (update_records["vp_stop_timestamp"].isna())
+            | (update_records["vp_stop_timestamp"] > update_records["vp_stop_timestamp"].shift(-1))
+        ),
+        update_records["vp_stop_timestamp"].shift(-1),
+        update_records["vp_stop_timestamp"],
+    )
+
+    update_records = update_records[~update_records["pk_id"].isna()]
 
     # add counts to process logger metadata
     process_logger.add_metadata(
-        updated_count=existing_was_updated_mask.sum(),
-        deleted_count=existing_to_del_mask.sum(),
+        updated_count=update_records.shape[0],
         inserted_count=new_to_insert_mask.sum(),
     )
-    # pylint: enable=duplicate-code
 
     # DB UPDATE operation
-    if existing_was_updated_mask.sum() > 0:
-        update_db_events = sa.update(VehiclePositionEvents.__table__).where(
-            VehiclePositionEvents.pk_id == sa.bindparam("b_pk_id")
+    if update_records.shape[0] > 0:
+        update_db_events = sa.update(VehicleEvents.__table__).where(
+            VehicleEvents.pk_id == sa.bindparam("b_pk_id")
         )
-        with session.begin() as cursor:
-            cursor.execute(
-                update_db_events,
-                merge_events.rename(columns={"pk_id": "b_pk_id"})
-                .loc[existing_was_updated_mask, ["b_pk_id", "timestamp_end"]]
-                .to_dict(orient="records"),
-            )
-
-    # DB DELETE operation
-    if existing_to_del_mask.sum() > 0:
-        delete_db_events = sa.delete(VehiclePositionEvents.__table__).where(
-            VehiclePositionEvents.pk_id.in_(
-                merge_events.loc[existing_to_del_mask, "pk_id"]
-            )
+        db_manager.execute_with_data(
+            update_db_events,
+            update_records[["pk_id","vp_move_timestamp","vp_stop_timestamp"]].rename(columns={"pk_id": "b_pk_id"})
         )
-        with session.begin() as cursor:
-            cursor.execute(delete_db_events)
 
     # DB INSERT operation
     if new_to_insert_mask.sum() > 0:
         insert_cols = list(set(merge_events.columns) - {"pk_id"})
-        with session.begin() as cursor:
-            cursor.execute(
-                sa.insert(VehiclePositionEvents.__table__),
-                merge_events.loc[new_to_insert_mask, insert_cols].to_dict(
-                    orient="records"
-                ),
-            )
+        db_manager.execute_with_data(
+            sa.insert(VehicleEvents.__table__),
+            merge_events.loc[new_to_insert_mask, insert_cols],
+        )
 
     process_logger.log_complete()
 
@@ -405,6 +399,7 @@ def process_vehicle_positions(db_manager: DatabaseManager) -> None:
 
         try:
             sizes = {}
+
             new_events = get_vp_dataframe(paths)
             sizes["parquet_events_count"] = new_events.shape[0]
 
@@ -412,16 +407,12 @@ def process_vehicle_positions(db_manager: DatabaseManager) -> None:
 
             new_events = join_gtfs_static(new_events, db_manager)
 
-            new_events = hash_events(new_events)
-
             new_events = transform_vp_timestamps(new_events)
             sizes["merge_events_count"] = new_events.shape[0]
 
             subprocess_logger.add_metadata(**sizes)
 
-            merge_vehicle_position_events(
-                str(folder), new_events, db_manager.get_session()
-            )
+            merge_vehicle_position_events(new_events, db_manager)
 
             update_md_log = (
                 sa.update(MetadataLog.__table__)

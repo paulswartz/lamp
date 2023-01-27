@@ -38,6 +38,7 @@ def add_event_hash_column(
 
     # convert rows of dataframe to concatenated string and apply vectorized
     # hashing function
+    expected_hash_columns = sorted(expected_hash_columns)
     df_to_hash[hash_column_name] = vectorized_function(
         df_to_hash[list(expected_hash_columns)].astype(str).values.sum(axis=1)
     )

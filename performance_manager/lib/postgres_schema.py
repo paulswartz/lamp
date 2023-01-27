@@ -14,6 +14,7 @@ class VehicleEvents(SqlBase):  # pylint: disable=too-few-public-methods
     pk_id = sa.Column(sa.Integer, primary_key=True)
     stop_sequence = sa.Column(sa.SmallInteger, nullable=False)
     stop_id = sa.Column(sa.String(60), nullable=False)
+    parent_station = sa.Column(sa.String(30), nullable=False)
     direction_id = sa.Column(sa.Boolean, nullable=False)
     route_id = sa.Column(sa.String(60), nullable=False)
     start_date = sa.Column(sa.Integer, nullable=False)
@@ -22,12 +23,12 @@ class VehicleEvents(SqlBase):  # pylint: disable=too-few-public-methods
     vp_move_timestamp = sa.Column(sa.Integer, nullable=True)
     vp_stop_timestamp = sa.Column(sa.Integer, nullable=True)
     tu_stop_timestamp = sa.Column(sa.Integer, nullable=True)
-    hash = sa.Column(
+    trip_stop_hash = sa.Column(
         sa.LargeBinary(16), nullable=False, index=True, unique=True
     )
     fk_static_timestamp = sa.Column(
         sa.Integer,
-        sa.ForeignKey("staticFeedInfo.timestamp"),
+        sa.ForeignKey("static_feed_info.timestamp"),
         nullable=False,
     )
     updated_on = sa.Column(sa.TIMESTAMP, server_default=sa.func.now())
@@ -38,7 +39,7 @@ class TempHashCompare(SqlBase):  # pylint: disable=too-few-public-methods
 
     __tablename__ = "temp_hash_compare"
 
-    hash = sa.Column(sa.LargeBinary(16))
+    hash = sa.Column(sa.LargeBinary(16), primary_key=True)
 
 
 class PerformanceMetrics(SqlBase):  # pylint: disable=too-few-public-methods
@@ -46,6 +47,7 @@ class PerformanceMetrics(SqlBase):  # pylint: disable=too-few-public-methods
 
     __tablename__ = "performance_metrics"
 
+    pk_id = sa.Column(sa.Integer, primary_key=True)
     fk_vehicle_event = sa.Column(
         sa.Integer,
         sa.ForeignKey("vehicle_events.pk_id", ondelete="CASCADE"),
