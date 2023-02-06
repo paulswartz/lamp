@@ -75,7 +75,7 @@ def transform_vp_dtypes(
     # store direction_id as Int64 [nullable]
     vehicle_positions["direction_id"] = pandas.to_numeric(
         vehicle_positions["direction_id"]
-    ).astype("Int64")
+    ).astype(numpy.bool8)
 
     # store start_time as seconds from start of day (Int64 [nullable])
     vehicle_positions["start_time"] = (
@@ -208,22 +208,22 @@ def transform_vp_timestamps(
     )
 
     vehicle_positions = vehicle_positions.sort_values(
-        by=["trip_stop_hash", "is_moving", "vehicle_timestamp"]
+        by=["trip_stop_hash", "is_moving", "vehicle_timestamp"], ascending=True
     ).drop_duplicates(subset=["trip_stop_hash", "is_moving"], keep="first")
 
     # get the move timestamp from all events where "is moving" is true
     vehicle_positions["vp_move_timestamp"] = numpy.where(
         vehicle_positions["is_moving"],
         vehicle_positions["vehicle_timestamp"],
-        numpy.nan,
-    ).astype("int64")
+        None,
+    )
 
     # get the stop timestamp from all events where "is moving" is false
     vehicle_positions["vp_stop_timestamp"] = numpy.where(
         ~vehicle_positions["is_moving"],
         vehicle_positions["vehicle_timestamp"],
-        numpy.nan,
-    ).astype("int64")
+        None,
+    )
 
     # copy all of the move timestamps into rows with stop timestamps
     vehicle_positions["vp_move_timestamp"] = numpy.where(
@@ -236,7 +236,7 @@ def transform_vp_timestamps(
         ),
         vehicle_positions["vp_move_timestamp"].shift(-1),
         vehicle_positions["vp_move_timestamp"],
-    ).astype("int64")
+    )
 
     # for stops that have both moving and stop events, we'll have two rows in
     # the dataframe. the first will have the move and stop timestamps and the
@@ -250,7 +250,9 @@ def transform_vp_timestamps(
     vehicle_positions = vehicle_positions.drop(
         columns=["is_moving", "vehicle_timestamp"]
     )
-    vehicle_positions.insert(0, "pk_id", numpy.nan)
+
+    vehicle_positions["vp_move_timestamp"] = vehicle_positions["vp_move_timestamp"].astype("Int64")
+    vehicle_positions["vp_stop_timestamp"] = vehicle_positions["vp_stop_timestamp"].astype("Int64")
 
     process_logger.log_complete()
     return vehicle_positions

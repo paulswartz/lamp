@@ -1,5 +1,6 @@
 from typing import Dict, List
 
+import binascii
 import numpy
 import pandas
 import sqlalchemy as sa
@@ -61,26 +62,35 @@ def collapse_events(
     stop pairs.
     """
     # sort by trip stop hash and then tu stop timestamp
-    events = pandas.concat([vp_events, tu_events])
-    events = events.sort_values(by=["trip_stop_hash", "tu_stop_timestamp"])
-
-    # shift the vp_stop_timestamp and the vp_move_timestamp columns up on
-    # successive rows with the same trip stop hash
-    events["vp_stop_timestamp"] = numpy.where(
-        (events["trip_stop_hash"] == events["trip_stop_hash"].shift(-1)),
-        events["vp_stop_timestamp"].shift(-1),
-        events["vp_stop_timestamp"],
+    events = pandas.merge(
+        vp_events[["trip_stop_hash","vp_stop_timestamp","vp_move_timestamp",]],
+        tu_events[["trip_stop_hash","tu_stop_timestamp"]],
+        how="outer",
+        on="trip_stop_hash",
+        validate="one_to_one",
     )
 
-    events["vp_move_timestamp"] = numpy.where(
-        (events["trip_stop_hash"] == events["trip_stop_hash"].shift(-1)),
-        events["vp_move_timestamp"].shift(-1),
-        events["vp_move_timestamp"],
-    )
+    details_columns = [
+        "stop_sequence",
+        "stop_id",
+        "parent_station",
+        "direction_id",
+        "route_id",
+        "start_date",
+        "start_time",
+        "vehicle_id",
+        "fk_static_timestamp",
+        "trip_stop_hash",
+    ]
 
-    # drop the second of successive trip stop hash rows all of the important
-    # data has been shifted up.
-    return events.drop_duplicates(subset=["trip_stop_hash"], keep="first")
+    events_details = pandas.concat(
+        [
+            vp_events[details_columns],
+            tu_events[details_columns],
+        ]
+    ).drop_duplicates(subset="trip_stop_hash")
+
+    return events.merge(events_details, how="left", on="trip_stop_hash", validate="one_to_one")
 
 
 def compute_metrics(events: pandas.DataFrame) -> pandas.DataFrame:
@@ -107,36 +117,77 @@ def upload_to_database(
     # from the new events. then pull events from the VehicleEvents table by
     # matching those hashes, which will be the events that will potentially be
     # updated.
+
+    # convert hash hex to bytes for DB compare
+    hash_bytes = events["trip_stop_hash"].str.decode("hex")
+
     db_manager.truncate_table(TempHashCompare)
     db_manager.execute_with_data(
-        sa.insert(TempHashCompare.__table__), events[["trip_stop_hash"]]
+        sa.insert(TempHashCompare.__table__), hash_bytes.to_frame("trip_stop_hash")
     )
 
-    existing_events = db_manager.select_as_dataframe(
+    database_events = db_manager.select_as_dataframe(
         sa.select(
             VehicleEvents.pk_id,
             VehicleEvents.trip_stop_hash,
-            VehicleEvents.vp_move_timestamp,
-            VehicleEvents.vp_stop_timestamp,
-            VehicleEvents.tu_stop_timestamp,
+            VehicleEvents.vp_move_timestamp.label("vp_move_db"),
+            VehicleEvents.vp_stop_timestamp.label("vp_stop_db"),
         ).join(
             TempHashCompare,
             TempHashCompare.trip_stop_hash == VehicleEvents.trip_stop_hash,
         )
     )
 
+    if database_events.shape[0] == 0:
+        database_events = pandas.DataFrame(columns=["trip_stop_hash","pk_id","vp_move_db","vp_stop_db"])
+    else:
+        # convert hash bytes to hex
+        database_events["trip_stop_hash"] = database_events["trip_stop_hash"].apply(binascii.hexlify).str.decode("utf-8")
+
     # combine the existing vehicle events with the new events. sort them by
     # trip stop hash so that vehicle events from the same trip and stop will be
     # consecutive. the existing events will have a pk id while the new ones
     # will not. sorting those with na=last ensures they are ordered existing
     # first and new second
-    all_events = pandas.concat([existing_events, events]).sort_values(
-        by=["trip_stop_hash", "pk_id"], na_position="last"
+    all_events = pandas.merge(
+        events,
+        database_events,
+        how="left",
+        on="trip_stop_hash",
     )
 
-    # create a mask for duplicated events that will be used in the both the update
-    # and insert masks
-    duplicate_mask = all_events.duplicated(subset="trip_stop_hash", keep=False)
+    all_events["vp_move_timestamp"] = numpy.where(
+        (
+            (all_events["pk_id"].notna())
+            & (all_events["vp_move_db"].notna())
+            & (
+                (all_events["vp_move_timestamp"].isna())
+                 | (all_events["vp_move_timestamp"] > all_events["vp_move_db"])
+            )
+        ),
+        all_events["vp_move_db"],
+        all_events["vp_move_timestamp"],
+    )
+
+    all_events["vp_stop_timestamp"] = numpy.where(
+        (
+            (all_events["pk_id"].notna())
+            & (all_events["vp_stop_db"].notna())
+            & (
+                (all_events["vp_stop_timestamp"].isna())
+                 | (all_events["vp_stop_timestamp"] > all_events["vp_stop_db"])
+            )
+        ),
+        all_events["vp_stop_db"],
+        all_events["vp_stop_timestamp"],
+    )
+
+    all_events = all_events.drop(columns=["vp_move_db","vp_stop_db"])
+
+    all_events = all_events.fillna(numpy.nan).replace([numpy.nan], [None])
+
+    # convert hash hex to bytes
+    all_events["trip_stop_hash"] = all_events["trip_stop_hash"].str.decode("hex")
 
     # update events are more complicated. find trip stop pairs that are
     # duplicated, implying the came both from the gtfs_rt files and the
@@ -144,109 +195,9 @@ def upload_to_database(
     # VehicleEvents table, where the pk_id is set. lastly, leave only the
     # events that need any of their vp_move, vp_stop, or tu_stop times
     # updated.
-    update_mask = (
-        (duplicate_mask)
-        & (all_events["pk_id"].notna())
-        & (
-            (
-                (~all_events["vp_move_timestamp"].shift(-1).isna())
-                & (
-                    (all_events["vp_move_timestamp"].isna())
-                    | (
-                        all_events["vp_move_timestamp"]
-                        > all_events["vp_move_timestamp"].shift(-1)
-                    )
-                )
-            )
-            | (
-                (~all_events["vp_stop_timestamp"].shift(-1).isna())
-                & (
-                    (all_events["vp_stop_timestamp"].isna())
-                    | (
-                        all_events["vp_stop_timestamp"]
-                        > all_events["vp_stop_timestamp"].shift(-1)
-                    )
-                )
-            )
-            | (
-                (~all_events["tu_stop_timestamp"].shift(-1).isna())
-                & (
-                    (all_events["tu_stop_timestamp"].isna())
-                    | (
-                        all_events["tu_stop_timestamp"]
-                        > all_events["tu_stop_timestamp"].shift(-1)
-                    )
-                )
-            )
-        )
-    )
+    update_mask = all_events["pk_id"].notna()
 
     if update_mask.sum() > 0:
-        # get all of the events that have a trip stop hash that needs to be
-        # updated
-        update_hashes = all_events.loc[update_mask, "trip_stop_hash"]
-        update_events = all_events[
-            all_events["trip_stop_hash"].isin(update_hashes)
-        ]
-
-        # update the vp move, vp stop, and tu stop times. its the same logic
-        # for all of them. if the trip stop hash is the same in consecutive
-        # events, the first is from the VehicleEvents table and the second is
-        # from the gtfs_rt files. if the existing event doesn't have a time
-        # or the existing time is later than the newly processed one, then
-        # use the new time. otherwise keep the old one.
-        update_events["vp_move_timestamp"] = numpy.where(
-            (
-                update_events["trip_stop_hash"]
-                == update_events["trip_stop_hash"].shift(-1)
-            )
-            & (
-                (
-                    update_events["vp_move_timestamp"]
-                    > update_events["vp_move_timestamp"].shift(-1)
-                )
-                | (update_events["vp_move_timestamp"].isna())
-            ),
-            update_events["vp_move_timestamp"].shift(-1),
-            update_events["vp_move_timestamp"],
-        )
-
-        update_events["vp_stop_timestamp"] = numpy.where(
-            (
-                update_events["trip_stop_hash"]
-                == update_events["trip_stop_hash"].shift(-1)
-            )
-            & (
-                (
-                    update_events["vp_stop_timestamp"]
-                    > update_events["vp_stop_timestamp"].shift(-1)
-                )
-                | (update_events["vp_stop_timestamp"].isna())
-            ),
-            update_events["vp_stop_timestamp"].shift(-1),
-            update_events["vp_stop_timestamp"],
-        )
-
-        update_events["tu_stop_timestamp"] = numpy.where(
-            (
-                update_events["trip_stop_hash"]
-                == update_events["trip_stop_hash"].shift(-1)
-            )
-            & (
-                (
-                    update_events["tu_stop_timestamp"]
-                    > update_events["tu_stop_timestamp"].shift(-1)
-                )
-                | (update_events["tu_stop_timestamp"].isna())
-            ),
-            update_events["tu_stop_timestamp"].shift(-1),
-            update_events["tu_stop_timestamp"],
-        )
-
-        # drop all events without a pk_id. the data in them has been copied
-        # into the other events if appropriate.
-        update_events = update_events[update_events["pk_id"].notna()]
-
         update_cols = [
             "pk_id",
             "vp_move_timestamp",
@@ -257,37 +208,20 @@ def upload_to_database(
             sa.update(VehicleEvents.__table__).where(
                 VehicleEvents.pk_id == sa.bindparam("b_pk_id")
             ),
-            update_events[update_cols].rename(columns={"pk_id": "b_pk_id"}),
+            all_events.loc[update_mask, update_cols].rename(columns={"pk_id": "b_pk_id"}),
         )
 
     # events that aren't duplicated came exclusively from the gtfs_rt files or the
     # VehicleEvents table. filter out events without pk_id's to remove events from
     # the VehicleEvents table.
-    insert_mask = ~duplicate_mask & all_events["pk_id"].isna()
+    insert_mask = all_events["pk_id"].isna()
 
     if insert_mask.sum() > 0:
-        insert_cols = [
-            "direction_id",
-            "route_id",
-            "start_date",
-            "start_time",
-            "vehicle_id",
-            "stop_sequence",
-            "stop_id",
-            "parent_station",
-            "trip_stop_hash",
-            "vp_move_timestamp",
-            "vp_stop_timestamp",
-            # "tu_stop_timestamp",
-            "fk_static_timestamp",
-        ]
-
-        insert_events = all_events.loc[insert_mask, insert_cols]
-
-        print(insert_events.dtypes)
+        insert_cols = list(set(all_events.columns) - {"pk_id"})
 
         db_manager.execute_with_data(
-            sa.insert(VehicleEvents.__table__), insert_events
+            sa.insert(VehicleEvents.__table__), 
+            all_events.loc[insert_mask, insert_cols],
         )
 
 

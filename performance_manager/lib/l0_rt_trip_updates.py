@@ -49,7 +49,7 @@ def get_tu_dataframe_chunks(
 def explode_stop_time_update(
     stop_time_update: Optional[List[Dict[str, Any]]],
     timestamp: int,
-    direction_id: int,
+    direction_id: bool,
     route_id: Any,
     start_date: int,
     start_time: int,
@@ -126,7 +126,7 @@ def get_and_unwrap_tu_dataframe(
         # store direction_id as int
         batch_events["direction_id"] = pandas.to_numeric(
             batch_events["direction_id"]
-        ).astype("int64")
+        ).astype(numpy.bool8)
 
         # store start_time as seconds from start of day int64
         batch_events["start_time"] = (
@@ -154,10 +154,6 @@ def get_and_unwrap_tu_dataframe(
 
     # transform Series of list of dicts into dataframe
     events = pandas.json_normalize(events.explode())
-
-    events["pk_id"] = None
-    events["vp_move_timestamp"] = None
-    events["vp_stop_timestamp"] = None
 
     return events
 
@@ -289,6 +285,8 @@ def reduce_trip_updates(trip_updates: pandas.DataFrame) -> pandas.DataFrame:
 
     # after hash and sort, "timestamp" longer needed
     trip_updates = trip_updates.drop(columns=["timestamp"])
+
+    trip_updates["tu_stop_timestamp"] = trip_updates["tu_stop_timestamp"].astype("Int64")
 
     process_logger.add_metadata(end_count=trip_updates.shape[0])
     process_logger.log_complete()

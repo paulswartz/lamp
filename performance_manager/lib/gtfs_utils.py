@@ -29,7 +29,7 @@ def add_event_hash_column(
     # function to be used for hashing each record,
     # requires string as input returns raw bytes object
     def apply_func(record: str) -> bytes:
-        return hashlib.md5(record.encode("utf8")).digest()
+        return hashlib.md5(record.encode("utf8")).hexdigest()
 
     # vectorize apply_func so it can be used on numpy.ndarray object
     vectorized_function = numpy.vectorize(apply_func)
@@ -39,6 +39,7 @@ def add_event_hash_column(
 
     # convert rows of dataframe to concatenated string and apply vectorized
     # hashing function
+    expected_hash_columns = sorted(expected_hash_columns)
     df_to_hash[hash_column_name] = vectorized_function(
         df_to_hash[list(expected_hash_columns)].astype(str).values.sum(axis=1)
     )
