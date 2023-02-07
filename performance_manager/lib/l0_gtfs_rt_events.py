@@ -154,16 +154,25 @@ def upload_to_database(
         database_events,
         how="left",
         on="trip_stop_hash",
+        validate="one_to_one",
     )
 
     all_events["vp_move_timestamp"] = numpy.where(
         (
             (all_events["pk_id"].notna())
             & (all_events["vp_move_db"].notna())
-            & (
-                (all_events["vp_move_timestamp"].isna())
-                 | (all_events["vp_move_timestamp"] > all_events["vp_move_db"])
-            )
+            & (all_events["vp_move_timestamp"].isna())
+        ),
+        all_events["vp_move_db"],
+        all_events["vp_move_timestamp"],
+    )
+
+    all_events["vp_move_timestamp"] = numpy.where(
+        (
+            (all_events["pk_id"].notna())
+            & (all_events["vp_move_db"].notna())
+            & (all_events["vp_move_timestamp"].notna())
+            & (all_events["vp_move_timestamp"] > all_events["vp_move_db"])
         ),
         all_events["vp_move_db"],
         all_events["vp_move_timestamp"],
@@ -173,13 +182,30 @@ def upload_to_database(
         (
             (all_events["pk_id"].notna())
             & (all_events["vp_stop_db"].notna())
-            & (
-                (all_events["vp_stop_timestamp"].isna())
-                 | (all_events["vp_stop_timestamp"] > all_events["vp_stop_db"])
-            )
+            & (all_events["vp_stop_timestamp"].isna())
         ),
         all_events["vp_stop_db"],
         all_events["vp_stop_timestamp"],
+    )
+
+    all_events["vp_stop_timestamp"] = numpy.where(
+        (
+            (all_events["pk_id"].notna())
+            & (all_events["vp_stop_db"].notna())
+            & (all_events["vp_stop_timestamp"].notna())
+            & (all_events["vp_stop_timestamp"] > all_events["vp_stop_db"])
+        ),
+        all_events["vp_stop_db"],
+        all_events["vp_stop_timestamp"],
+    )
+
+    update_mask = (
+        (all_events["pk_id"].notna())
+        & (
+            (all_events["tu_stop_timestamp"].notna())
+            | (all_events["vp_stop_timestamp"] != all_events["vp_stop_db"])
+            | (all_events["vp_move_timestamp"] != all_events["vp_move_db"])
+        )
     )
 
     all_events = all_events.drop(columns=["vp_move_db","vp_stop_db"])
@@ -195,8 +221,6 @@ def upload_to_database(
     # VehicleEvents table, where the pk_id is set. lastly, leave only the
     # events that need any of their vp_move, vp_stop, or tu_stop times
     # updated.
-    update_mask = all_events["pk_id"].notna()
-
     if update_mask.sum() > 0:
         update_cols = [
             "pk_id",
