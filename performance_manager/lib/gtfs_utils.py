@@ -27,8 +27,8 @@ def add_event_hash_column(
         raise IndexError(f"Dataframe is missing expected columns: {row_check}")
 
     # function to be used for hashing each record,
-    # requires string as input returns raw bytes object
-    def apply_func(record: str) -> bytes:
+    # requires string as input returns a hex string
+    def apply_func(record: str) -> str:
         return hashlib.md5(record.encode("utf8")).hexdigest()
 
     # vectorize apply_func so it can be used on numpy.ndarray object

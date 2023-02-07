@@ -207,48 +207,34 @@ def transform_vp_timestamps(
         ],
     )
 
-    vehicle_positions = vehicle_positions.sort_values(
-        by=["trip_stop_hash", "is_moving", "vehicle_timestamp"], ascending=True
-    ).drop_duplicates(subset=["trip_stop_hash", "is_moving"], keep="first")
+    vp_timestamps = pandas.pivot_table(
+        vehicle_positions, 
+        index="trip_stop_hash", 
+        columns="is_moving", 
+        aggfunc={"vehicle_timestamp":min}
+    ).reset_index(drop=False)
 
-    # get the move timestamp from all events where "is moving" is true
-    vehicle_positions["vp_move_timestamp"] = numpy.where(
-        vehicle_positions["is_moving"],
-        vehicle_positions["vehicle_timestamp"],
-        None,
+    vp_timestamps.columns = vp_timestamps.columns.to_flat_index()
+    vp_timestamps = vp_timestamps.rename(
+        columns={
+            ("trip_stop_hash",""):"trip_stop_hash",
+            ("vehicle_timestamp",False):"vp_stop_timestamp",
+            ("vehicle_timestamp",True):"vp_move_timestamp",
+        }
     )
 
-    # get the stop timestamp from all events where "is moving" is false
-    vehicle_positions["vp_stop_timestamp"] = numpy.where(
-        ~vehicle_positions["is_moving"],
-        vehicle_positions["vehicle_timestamp"],
-        None,
-    )
-
-    # copy all of the move timestamps into rows with stop timestamps
-    vehicle_positions["vp_move_timestamp"] = numpy.where(
-        (
-            (~vehicle_positions["is_moving"])
-            & (
-                vehicle_positions["trip_stop_hash"]
-                == vehicle_positions["trip_stop_hash"].shift(-1)
-            )
-        ),
-        vehicle_positions["vp_move_timestamp"].shift(-1),
-        vehicle_positions["vp_move_timestamp"],
-    )
-
-    # for stops that have both moving and stop events, we'll have two rows in
-    # the dataframe. the first will have the move and stop timestamps and the
-    # second will only have the stop timestsmp. both entries will have the stame
-    # stop hash, so remove all duplicates of the hash, keeping the first.
-    vehicle_positions = vehicle_positions.drop_duplicates(
-        subset=["trip_stop_hash"], keep="first"
-    )
-
-    # add a primary key and drop "is_moving" and "vehicle_timestamp"
     vehicle_positions = vehicle_positions.drop(
-        columns=["is_moving", "vehicle_timestamp"]
+        columns=["is_moving","vehicle_timestamp"]
+    ).drop_duplicates(
+        subset="trip_stop_hash", keep="first"
+    )
+
+    vehicle_positions = pandas.merge(
+        vp_timestamps,
+        vehicle_positions,
+        how="left",
+        on="trip_stop_hash",
+        validate="one_to_one",
     )
 
     vehicle_positions["vp_move_timestamp"] = vehicle_positions["vp_move_timestamp"].astype("Int64")
