@@ -58,13 +58,13 @@ def transform_vp_dtypes(
     ).astype(numpy.bool8)
     vehicle_positions = vehicle_positions.drop(columns=["current_status"])
 
-    # store start_date as Int64 [nullable] instead of string
+    # store start_date as int64 [not nullable] instead of string
     vehicle_positions["start_date"] = pandas.to_numeric(
         vehicle_positions["start_date"]
     ).astype("int64")
 
     # rename current_stop_sequence as stop_sequence
-    # and convert to Int64 [nullable]
+    # and convert to int64 [not nullable]
     vehicle_positions.rename(
         columns={"current_stop_sequence": "stop_sequence"}, inplace=True
     )
@@ -72,12 +72,12 @@ def transform_vp_dtypes(
         vehicle_positions["stop_sequence"]
     ).astype("int64")
 
-    # store direction_id as Int64 [nullable]
+    # store direction_id as int64 [not nullable]
     vehicle_positions["direction_id"] = pandas.to_numeric(
         vehicle_positions["direction_id"]
     ).astype(numpy.bool8)
 
-    # store start_time as seconds from start of day (Int64 [nullable])
+    # store start_time as seconds from start of day (int64 [not nullable])
     vehicle_positions["start_time"] = (
         vehicle_positions["start_time"]
         .apply(start_time_to_seconds)
@@ -186,7 +186,6 @@ def transform_vp_timestamps(
     * "trip_stop_hash" - unique to vehicle/trip/stop
     * "vp_move_timestamp" - when the vehicle begins moving towards the hashed stop
     * "vp_stop_timestamp" - when the vehicle arrives at the hashed stop
-    * "pk_id" -
 
     this method will remove "is_moving" and "vehicle_timestamp"
     """
