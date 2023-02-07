@@ -61,7 +61,7 @@ def transform_vp_dtypes(
     # store start_date as Int64 [nullable] instead of string
     vehicle_positions["start_date"] = pandas.to_numeric(
         vehicle_positions["start_date"]
-    ).astype("Int64")
+    ).astype("int64")
 
     # rename current_stop_sequence as stop_sequence
     # and convert to Int64 [nullable]
@@ -70,7 +70,7 @@ def transform_vp_dtypes(
     )
     vehicle_positions["stop_sequence"] = pandas.to_numeric(
         vehicle_positions["stop_sequence"]
-    ).astype("Int64")
+    ).astype("int64")
 
     # store direction_id as Int64 [nullable]
     vehicle_positions["direction_id"] = pandas.to_numeric(
@@ -81,7 +81,7 @@ def transform_vp_dtypes(
     vehicle_positions["start_time"] = (
         vehicle_positions["start_time"]
         .apply(start_time_to_seconds)
-        .astype("Int64")
+        .astype("int64")
     )
 
     return vehicle_positions
@@ -207,6 +207,8 @@ def transform_vp_timestamps(
         ],
     )
 
+    # use pivot_table to find minimum vehicle_timestamp for each combination of
+    # trip_stop_hash and is_moving (True/False)
     vp_timestamps = pandas.pivot_table(
         vehicle_positions, 
         index="trip_stop_hash", 
@@ -214,6 +216,8 @@ def transform_vp_timestamps(
         aggfunc={"vehicle_timestamp":min}
     ).reset_index(drop=False)
 
+    # pivot_table creates multi-index column names
+    # flatten column index and rename to required column names
     vp_timestamps.columns = vp_timestamps.columns.to_flat_index()
     vp_timestamps = vp_timestamps.rename(
         columns={
@@ -223,12 +227,16 @@ def transform_vp_timestamps(
         }
     )
 
+    # produce dataframe of one record for every trip_stop_hash and associated
+    # feature columns
     vehicle_positions = vehicle_positions.drop(
         columns=["is_moving","vehicle_timestamp"]
     ).drop_duplicates(
         subset="trip_stop_hash", keep="first"
     )
 
+    # merge dataframe containing vehicle_position timestamps with dataframe
+    # containing feature columns
     vehicle_positions = pandas.merge(
         vp_timestamps,
         vehicle_positions,
