@@ -27,14 +27,21 @@ def get_seed_data(db_manager: DatabaseManager) -> Dict[int, List[int]]:
 
     return: Dict[start_date:int : List[fk_static_timestamps]]
     """
-    max_days_to_process = 3
+    max_days_to_process = 5
 
-    last_metric_update = sa.select(
-        sa.func.coalesce(
-            sa.func.max(VehicleTrips.updated_on),
-            sa.func.to_timestamp(0),
-        )
-    ).scalar_subquery()
+    recent_start_dates = sa.select(
+        VehicleEvents.start_date
+    ).distinct(
+        VehicleEvents.start_date
+    ).order_by(
+        sa.desc(VehicleEvents.start_date)
+    ).limit(2).subquery()
+
+    trips_start_dates = sa.select(
+        VehicleTrips.start_date
+    ).distinct(
+        VehicleTrips.start_date
+    ).subquery()
 
     seed_query = (
         sa.select(
@@ -45,9 +52,13 @@ def get_seed_data(db_manager: DatabaseManager) -> Dict[int, List[int]]:
             VehicleEvents.start_date,
             VehicleEvents.fk_static_timestamp,
         )
-        .where(VehicleEvents.updated_on > last_metric_update)
-        .order_by(VehicleEvents.start_date)
-        .limit(100)
+        .where(
+            sa.or_(
+                VehicleEvents.start_date.in_(recent_start_dates),
+                VehicleEvents.start_date.not_in(trips_start_dates)
+            )
+        ).order_by(VehicleEvents.start_date)
+        .limit(50)
     )
 
     # returns empty list if no records to process
