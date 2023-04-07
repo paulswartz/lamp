@@ -84,4 +84,8 @@ jobs:
       - uses: ./.github/actions/poetry_deps
         with:
           poetry-dir: python_src
+      - name: Show Poetry info
+        run: |
+          poetry env list 
+          poetry env info
       - run: poetry run pytest
